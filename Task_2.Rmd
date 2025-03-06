@@ -1,0 +1,197 @@
+---
+title: "Task_2_ByTemplate"
+author: "Kasandika Andariefli"
+date: "2025-03-06"
+output:
+  pdf_document: default
+  html_document: default
+---
+---
+title: "Quantium Virtual Internship - Retail Strategy and Analytics - Task 2"
+output:
+  pdf_document: 
+    df_print: default
+    highlight: tango
+    keep_tex: yes
+    latex_engine: xelatex
+header-includes:
+  \usepackage{fvextra}
+---
+
+```{r setup, include=FALSE}
+library(data.table)
+library(ggplot2)
+library(tidyr)
+knitr::opts_chunk$set(echo = TRUE, linewidth = 80)
+```
+
+## Load Data
+
+```{r 0. Load data}
+data <- read.csv("QVI_data.csv")
+head(data)
+
+# Ensure DATE is in Date format
+data$DATE <- as.Date(data$DATE, format="%Y-%m-%d")
+
+# Create YearMonth Column
+setDT(data)  # Ensure 'data' is a data.table
+data[, YEARMONTH := as.numeric(format(DATE, "%Y%m"))]
+```
+
+## Compute Store Metrics
+
+```{r 1. Aggregate Data}
+measureOverTime <- data[, .(
+  totSales = sum(TOT_SALES),
+  nCustomers = uniqueN(LYLTY_CARD_NBR),
+  nTxnPerCust = .N / uniqueN(LYLTY_CARD_NBR),
+  nChipsPerTxn = sum(PROD_QTY) / .N,
+  avgPricePerUnit = sum(TOT_SALES) / sum(PROD_QTY)
+), by = .(STORE_NBR, YEARMONTH)]
+```
+
+## Control Store Selection
+
+```{r 2. Define Correlation Function}
+calculateCorrelation <- function(inputTable, metricCol, storeComparison) {
+  calcCorrTable <- data.table(Store1 = numeric(), Store2 = numeric(), corr_measure = numeric())
+  storeNumbers <- unique(inputTable[, STORE_NBR])
+  
+  for (i in storeNumbers) {
+    merged_data <- merge(
+      inputTable[STORE_NBR == storeComparison, .(YEARMONTH, metric = get(metricCol))],
+      inputTable[STORE_NBR == i, .(YEARMONTH, metric = get(metricCol))],
+      by = "YEARMONTH", suffixes = c("_trial", "_control"))
+    
+    if (nrow(merged_data) > 1) {
+      corr_value <- cor(merged_data$metric_trial, merged_data$metric_control, use="complete.obs")
+    } else {
+      corr_value <- NA
+    }
+    
+    calcCorrTable <- rbind(calcCorrTable, data.table(Store1 = storeComparison, Store2 = i, corr_measure = corr_value))
+  }
+  return(calcCorrTable)
+}
+```
+
+```{r}
+trial_store <- 77
+corr_nSales <- calculateCorrelation(measureOverTime, "totSales", trial_store)
+corr_nCustomers <- calculateCorrelation(measureOverTime, "nCustomers", trial_store)
+
+# View results
+head(corr_nSales)
+head(corr_nCustomers)
+```
+
+
+```{r 3. Define Magnitude Distance Function}
+calculateMagnitudeDistance <- function(inputTable, metricCol, storeComparison) {
+  calcDistTable <- data.table(Store1 = numeric(), Store2 = numeric(), measure = numeric())
+  storeNumbers <- unique(inputTable[, STORE_NBR])
+  
+  for (i in storeNumbers) {
+    merged_data <- merge(
+      inputTable[STORE_NBR == storeComparison, .(YEARMONTH, metric = get(metricCol))],
+      inputTable[STORE_NBR == i, .(YEARMONTH, metric = get(metricCol))],
+      by = "YEARMONTH", suffixes = c("_trial", "_control"))
+    
+    measure_value <- mean(abs(merged_data$metric_trial - merged_data$metric_control), na.rm=TRUE)
+    calcDistTable <- rbind(calcDistTable, data.table(Store1 = storeComparison, Store2 = i, measure = measure_value))
+  }
+  
+  minMaxDist <- calcDistTable[, .(minDist = min(measure), maxDist = max(measure)), by = .(Store1)]
+  distTable <- merge(calcDistTable, minMaxDist, by = "Store1")
+  distTable[, magnitudeMeasure := 1 - (measure - minDist) / (maxDist - minDist)]
+  
+  return(distTable[, .(Store1, Store2, mag_measure = mean(magnitudeMeasure))])
+}
+```
+
+```{r}
+# Compute magnitude distance for trial store 77
+mag_nSales <- calculateMagnitudeDistance(measureOverTime, "totSales", 77)
+mag_nCustomers <- calculateMagnitudeDistance(measureOverTime, "nCustomers", 77)
+
+# View results
+head(mag_nSales)
+head(mag_nCustomers)
+
+```
+
+
+```{r 4. Compute Control Store Scores}
+trial_store <- 77
+corr_nSales <- calculateCorrelation(measureOverTime, "totSales", trial_store)
+corr_nCustomers <- calculateCorrelation(measureOverTime, "nCustomers", trial_store)
+mag_nSales <- calculateMagnitudeDistance(measureOverTime, "totSales", trial_store)
+mag_nCustomers <- calculateMagnitudeDistance(measureOverTime, "nCustomers", trial_store)
+
+score_nSales <- merge(corr_nSales, mag_nSales, by = c("Store1", "Store2"))[, scoreNSales := 0.5 * corr_measure + 0.5 * mag_measure]
+score_nCustomers <- merge(corr_nCustomers, mag_nCustomers, by = c("Store1", "Store2"))[, scoreNCust := 0.5 * corr_measure + 0.5 * mag_measure]
+
+score_Control <- merge(score_nSales, score_nCustomers, by = c("Store1", "Store2"))
+score_Control[, finalControlScore := 0.5 * scoreNSales + 0.5 * scoreNCust]
+
+control_store <- score_Control[Store1 == trial_store][order(-finalControlScore)][2, Store2]
+```
+```{r}
+control_store
+```
+```{r}
+# Prepare data for visualization
+pastSales <- measureOverTime[, Store_type := ifelse(
+  STORE_NBR == trial_store, "Trial",
+  ifelse(STORE_NBR == control_store, "Control", "Other stores"))
+][, totSales := mean(totSales), by = c("YEARMONTH", "Store_type")
+][, TransactionMonth := as.Date(paste(YEARMONTH %/% 100, YEARMONTH %% 100, 1, sep = "-"), "%Y-%m-%d")
+][YEARMONTH < 201903 , ]
+
+# Plot total sales trends
+ggplot(pastSales, aes(TransactionMonth, totSales, color = Store_type)) +
+  geom_line() +
+  labs(x = "Month of operation", y = "Total sales", title = "Total Sales by Month")
+
+```
+## Trial Assessment
+
+```{r 5. Compute Trial Uplift}
+scalingFactorForControlSales <- measureOverTime[STORE_NBR == trial_store & YEARMONTH < 201902, sum(totSales)] / 
+  measureOverTime[STORE_NBR == control_store & YEARMONTH < 201902, sum(totSales)]
+
+scaledControlSales <- measureOverTime[STORE_NBR == control_store, ][, controlSales := totSales * scalingFactorForControlSales]
+```
+
+```{r 6. Statistical Testing}
+percentageDiff <- merge(scaledControlSales[, .(YEARMONTH, controlSales)], 
+                        measureOverTime[STORE_NBR == trial_store, .(YEARMONTH, totSales)], 
+                        by = "YEARMONTH")[, percentageDiff := abs(controlSales - totSales) / controlSales]
+
+stdDev <- sd(percentageDiff[YEARMONTH < 201902 , percentageDiff])
+percentageDiff[, tValue := percentageDiff / stdDev]
+```
+
+
+```{r 7. Visualization}
+library(ggplot2)
+library(lubridate)
+library(scales)
+
+# Convert YEARMONTH to a proper date format (assuming numeric YYYYMM)
+percentageDiff$YEARMONTH <- as.Date(paste0(percentageDiff$YEARMONTH, "01"), format="%Y%m%d")
+
+ggplot(percentageDiff, aes(x = YEARMONTH, y = percentageDiff)) +
+  geom_line() +
+  labs(title = "Trial Uplift Analysis", x = "Month", y = "Percentage Difference") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+Fluctuations in the percentage difference over time. There are peaks in September 2018 and February 2019, dips are in August 2018 and November 2018 as well as a sharp drop in March 2019 after the February peak followed by a gradual increase in April 2019.
+
+* Volatility appears too high, external factors may have heavily influenced the trial’s success.
+* Sustaining uplift beyond peak months is a challenge.
+* Investigate what happened in September 2018, February 2019, and March 2019 to understand the causes behind the fluctuations.
