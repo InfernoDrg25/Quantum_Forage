@@ -1,0 +1,547 @@
+---
+title: "Quantum_Task1"
+author: "Kasandika Andariefli"
+date: "2025-03-04"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+```{r}
+library(readr)      
+library(readxl)     
+library(dplyr)     
+library(ggplot2)    
+```
+
+
+# Data Loading
+```{r}
+purchase_data <- read_csv("QVI_purchase_behaviour.csv")
+transaction_data <- read_excel("QVI_transaction_data.xlsx", sheet = 1)
+
+```
+```{r}
+str(purchase_data )
+```
+```{r}
+head(purchase_data$LYLTY_CARD_NBR)
+head(purchase_data$LIFESTAGE)
+head(purchase_data$PREMIUM_CUSTOMER)
+```
+
+```{r}
+str(transaction_data)
+```
+DATE should be in a proper Date format instead of numeric
+```{r}
+transaction_data$DATE <- as.Date(transaction_data$DATE, origin = "1899-12-30")
+str(transaction_data)  # DATE should now be Date type
+head(transaction_data$DATE) 
+```
+```{r}
+head(purchase_data)
+head(transaction_data)
+```
+```{r}
+summary(purchase_data)
+summary(transaction_data)
+```
+## Checking for missing value
+```{r}
+colSums(is.na(purchase_data))
+colSums(is.na(transaction_data))
+```
+## Checking for duplicates
+```{r}
+sum(duplicated(purchase_data))
+sum(duplicated(transaction_data))
+```
+```{r}
+# Removing duplicated values
+transaction_data <- transaction_data %>% distinct()
+sum(duplicated(transaction_data))
+```
+
+# Feature Engineering
+```{r}
+head(transaction_data$PROD_NAME)
+```
+The pack size is at the end of the PROD_Name, in the ...g format, we aim to extract the numeric value before the "g".
+```{r}
+# transaction_data$PACK_SIZE <- as.numeric(gsub(".*?(\\d{2,3})g$", "\\1", transaction_data$PROD_NAME))
+#vtransaction_data$PACK_SIZE <- as.numeric(gsub(".*?(\\d{2,3})[gG]$", "\\1", trimws(transaction_data$PROD_NAME)))
+transaction_data$PACK_SIZE <- as.numeric(gsub(".*?(\\d{2,3})[gG].*", "\\1", trimws(transaction_data$PROD_NAME)))
+```
+```{r}
+sum(is.na(transaction_data$PACK_SIZE))
+transaction_data[is.na(transaction_data$PACK_SIZE), "PROD_NAME"]
+```
+
+Extracting the name of the pack
+```{r}
+transaction_data$BRAND <- gsub("^(\\S+).*", "\\1", transaction_data$PROD_NAME)
+```
+```{r}
+head(transaction_data[, c("PROD_NAME", "BRAND", "PACK_SIZE")])
+```
+
+# Exploratory Data Analysis
+
+## Total Spend per Customer Segment
+```{r}
+library(ggplot2)
+library(dplyr)
+
+library(dplyr)
+
+customer_spend <- transaction_data %>%
+  left_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(LIFESTAGE, PREMIUM_CUSTOMER) %>%
+  summarise(TOTAL_SPEND = sum(TOT_SALES, na.rm = TRUE)) %>%
+  arrange(desc(TOTAL_SPEND))
+
+print(customer_spend)
+
+# Compute total spend
+customer_spend <- transaction_data %>%
+  left_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(LIFESTAGE, PREMIUM_CUSTOMER) %>%
+  summarise(TOTAL_SPEND = sum(TOT_SALES, na.rm = TRUE)) %>%
+  arrange(desc(TOTAL_SPEND))
+
+# Plot total spend
+ggplot(customer_spend, aes(x = reorder(LIFESTAGE, -TOTAL_SPEND), y = TOTAL_SPEND, fill = PREMIUM_CUSTOMER)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Total Spend per Customer Segment",
+       x = "Lifestage",
+       y = "Total Spend ($)",
+       fill = "Premium Customer") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+Insights
+
+1. Older Singles/Couples and Retirees are among the highest spenders.  
+   This is very important.
+2. New Families have the lowest spend across all premium tiers.
+3. Premium customers are less prominent throughout all customer segments.
+
+Potential Strategy
+
+1. Target high-spending segments (Older Singles/Couples, Retirees, Older Families).
+2. Encourage higher spending in younger demographics (Young Singles/Couples, Young Families, New Families).
+3. Explore premium product promotions to increase engagement.
+
+## Average Spend per Transaction Analysis
+```{r}
+avg_spend_txn <- transaction_data %>%
+  left_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(LIFESTAGE, PREMIUM_CUSTOMER) %>%
+  summarise(AVG_SPEND_TXN = mean(TOT_SALES, na.rm = TRUE)) %>%
+  arrange(desc(AVG_SPEND_TXN))
+
+print(avg_spend_txn)
+
+library(ggplot2)
+
+
+ggplot(avg_spend_txn, aes(x = reorder(LIFESTAGE, -AVG_SPEND_TXN), y = AVG_SPEND_TXN, fill = PREMIUM_CUSTOMER)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Average Spend per Transaction by Customer Segment",
+       x = "Lifestage",
+       y = "Average Spend per Transaction ($)",
+       fill = "Premium Customer") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+Insights
+Average spend per transaction is fairly consistent across all customer segments.
+
+## Pack Size Influence on Spending
+```{r}
+pack_size_spend <- transaction_data %>%
+  left_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(PACK_SIZE) %>%
+  summarise(AVG_SPEND = mean(TOT_SALES, na.rm = TRUE),
+            TOTAL_SPEND = sum(TOT_SALES, na.rm = TRUE),
+            TRANSACTIONS = n()) %>%
+  arrange(desc(AVG_SPEND))
+
+print(head(pack_size_spend, 10))  # Show top 10 pack sizes by avg spend
+
+# ====
+library(ggplot2)
+
+ggplot(pack_size_spend, aes(x = PACK_SIZE, y = AVG_SPEND)) +
+  geom_point(color = "blue", alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linetype = "dashed") +
+  labs(title = "Pack Size vs. Average Spend",
+       x = "Pack Size (g)",
+       y = "Average Spend ($)") +
+  theme_minimal()
+```
+Insight
+
+1. Positive correlation between pack size and average spend
+2. Smaller pack sizes have a wider variance in spend
+
+Potential Strategy
+
+1. Promote Bulk Buying, offer discounts on larger pack sizes to encourage customers to purchase more at once.
+2. Optimize Shelf Space & Inventory for Larger Packs
+
+## Purchase Quantity Influence on Spend
+```{r}
+qty_spend <- transaction_data %>%
+  left_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(PROD_QTY) %>%
+  summarise(AVG_SPEND = mean(TOT_SALES, na.rm = TRUE),
+            TOTAL_SPEND = sum(TOT_SALES, na.rm = TRUE),
+            TRANSACTIONS = n()) %>%
+  arrange(desc(AVG_SPEND))
+
+print(head(qty_spend, 10))  # Show top 10 purchase quantities by avg spend
+
+library(ggplot2)
+
+ggplot(qty_spend, aes(x = PROD_QTY, y = AVG_SPEND)) +
+  geom_point(color = "green", alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, color = "red", linetype = "dashed") +
+  labs(title = "Purchase Quantity vs. Average Spend",
+       x = "Purchase Quantity",
+       y = "Average Spend ($)") +
+  theme_minimal()
+```
+
+Insight
+
+1. Higher Purchase Quantity Leads to Lower Average Spend per Unit, single-unit purchase has an average spend of $3.71, while a 200-unit purchase averages $650 per unit, likely an outlier.
+2. Higher Quantities (3-5 Units) Have Strong Spend but Lower Frequency
+
+Potential Strategy: Loyalty Programs for Bulk Buyers: buying 4-5 packs per transaction could benefit from loyalty incentives.
+
+
+## Brand Popularity Analysis
+```{r}
+library(ggplot2)
+library(dplyr)
+
+brand_popularity <- transaction_data %>%
+  group_by(BRAND) %>%
+  summarise(TRANSACTIONS = n()) %>%
+  arrange(desc(TRANSACTIONS))
+
+ggplot(brand_popularity, aes(x = reorder(BRAND, TRANSACTIONS), y = TRANSACTIONS, fill = BRAND)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top Brands by Transaction Count (Ascending Order)",
+       x = "Brand",
+       y = "Number of Transactions") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+head(brand_popularity, 10)  # Show the top 10 most purchased brands
+```
+Insights
+
+1. Kettle being significantly ahead of others
+2. Smiths, Pringles, and Doritos indicate a strong consumer preference for mainstream, well-known chip brands.
+3. Niche brands like French, NCC, and Sunbites have the lowest transaction counts, potentially indicating a smaller or specialized audience.
+
+Potential Strategy
+
+1. High performers such as the top 4 can continue leveraging strong brand loyalty with promotions and limited-time offers.
+2. Mid tier brands can benefit from increased marketing and bundle offers to push them into the top-tier segment.
+3. Low performers like French, NCC, and Sunbites could use better shelf placement, discounts, or co-marketing with retailers to improve transactions.
+
+## Total Revenue Contribution per Brand
+```{r}
+brand_revenue <- transaction_data %>%
+  group_by(BRAND) %>%
+  summarise(TOTAL_REVENUE = sum(TOT_SALES, na.rm = TRUE)) %>%
+  arrange(desc(TOTAL_REVENUE))
+
+ggplot(brand_revenue, aes(x = reorder(BRAND, TOTAL_REVENUE), y = TOTAL_REVENUE, fill = BRAND)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top Brands by Total Revenue",
+       x = "Brand",
+       y = "Total Revenue ($)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+head(brand_revenue, 10)  # Show the top 10 brands with the highest total revenue
+
+```
+Insights
+
+1. Kettle leads in total revenue, reinforcing its strong market dominance.
+2. The top 4 generates high revenue overall, aligning with their high transaction counts.
+3. Few mid tier brands (Old, Thins, Tostitos, and Twisties) perform well in revenue despite lower transaction counts, indicating higher price points or bulk purchases.
+4. Low-revenue brands (Sunbites, Burger, French, NCC) may struggle due to lower transaction counts or smaller pack sizes.
+
+Potential Strategy
+
+1. Leverage Pricing Strategy for Mid-Tier Brands by promoting larger pack sizes or premium variants.
+2. Maintain a competitive edge for high-performers by branding and targeted promotions.
+3. Boost low-performing brands by better visibility, competitive pricing, or bundling with popular brands to increase market share.
+
+## Comparing Brands by Revenue-to-Transaction Ratio
+```{r}
+brand_analysis <- transaction_data %>%
+  group_by(BRAND) %>%
+  summarise(
+    TRANSACTIONS = n(), 
+    TOTAL_REVENUE = sum(TOT_SALES, na.rm = TRUE)
+  ) %>%
+  mutate(REVENUE_PER_TXN = TOTAL_REVENUE / TRANSACTIONS) %>%
+  arrange(desc(REVENUE_PER_TXN))
+
+head(brand_analysis, 10)  # Show the top 10 brands
+
+ggplot(brand_analysis, aes(x = reorder(BRAND, REVENUE_PER_TXN), y = REVENUE_PER_TXN, fill = BRAND)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Brands Ranked by Revenue per Transaction",
+       x = "Brand",
+       y = "Revenue per Transaction ($)") +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+Potential Strategy
+1. Brands with high revenue per transaction (e.g., Dorito, Old, Kettle) can explore bundling options to encourage repeat purchases.
+2. Low-performing brands should consider larger pack sizes or premium variants to increase revenue per transaction.
+
+## Average Spend per Transaction per Customer Segment
+```{r}
+avg_spend_segment <- transaction_data %>%
+  left_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(LIFESTAGE, PREMIUM_CUSTOMER) %>%
+  summarise(
+    TRANSACTIONS = n(),
+    TOTAL_SPEND = sum(TOT_SALES, na.rm = TRUE),
+    AVG_SPEND_PER_TXN = TOTAL_SPEND / TRANSACTIONS
+  ) %>%
+  arrange(desc(AVG_SPEND_PER_TXN))
+
+print(avg_spend_segment)
+
+ggplot(avg_spend_segment, aes(x = reorder(interaction(LIFESTAGE, PREMIUM_CUSTOMER), AVG_SPEND_PER_TXN), 
+                              y = AVG_SPEND_PER_TXN, fill = PREMIUM_CUSTOMER)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Average Spend per Transaction by Customer Segment",
+       x = "Customer Segment",
+       y = "Average Spend per Transaction ($)") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+```
+
+## Total Spend Breakdown: LIFESTAGE vs. PREMIUM_CUSTOMER
+```{r}
+library(scales)  # For formatting numbers
+
+ggplot(avg_spend_segment, aes(x = LIFESTAGE, y = TOTAL_SPEND, fill = PREMIUM_CUSTOMER)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(title = "Total Spend by Customer Segment",
+       x = "Lifestage",
+       y = "Total Spend ($)",
+       fill = "Premium Customer Tier") +
+  scale_y_continuous(labels = scales::comma) +  # Ensures full number formatting
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+Insights
+
+1. Older Singles/Couples and Retirees spend the most overall.
+2. Budget customers dominate the top-spending groups.
+3. New Families have the lowest spend, with fewer Premium/Mainstream customers.
+4. Underage and Young Singles/Couples Have Moderate Spending
+
+Potential Strategy
+
+1. Targeting Older Singles/Couples & Retirees by promoting premium tier products or offering loyalty programs
+2. Engage with New Families and Underage Singles/Couples by introducing affordable bulk-pack options to attract budget-conscious buyers
+3. Enhancing brand appeal for Young Singles & Couples 
+
+## Brand Preferences by Customer Segment
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Summarizing total spend per brand and customer segment
+brand_spend <- transaction_data %>%
+  inner_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(BRAND, LIFESTAGE) %>%
+  summarise(TOTAL_SPEND = sum(TOT_SALES), .groups = 'drop')
+
+# Plot
+ggplot(brand_spend, aes(x = reorder(BRAND, -TOTAL_SPEND), y = TOTAL_SPEND, fill = LIFESTAGE)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Total Spend per Brand by Customer Segment",
+       x = "Brand",
+       y = "Total Spend ($)",
+       fill = "Lifestage") +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 10))
+
+# Finding top 5 brands per customer segment
+top_brands <- transaction_data %>%
+  inner_join(purchase_data, by = "LYLTY_CARD_NBR") %>%
+  group_by(LIFESTAGE, BRAND) %>%
+  summarise(TOTAL_SPEND = sum(TOT_SALES), .groups = 'drop') %>%
+  arrange(desc(TOTAL_SPEND)) %>%
+  group_by(LIFESTAGE) %>%
+  slice_max(order_by = TOTAL_SPEND, n = 5)
+
+# Plot
+ggplot(top_brands, aes(x = reorder(BRAND, -TOTAL_SPEND), y = TOTAL_SPEND, fill = LIFESTAGE)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~LIFESTAGE, scales = "free_x") +
+  labs(title = "Top 5 Brands Preferred by Each Customer Segment",
+       x = "Brand",
+       y = "Total Spend ($)",
+       fill = "Lifestage") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+Insights
+
+1. Kettle and Smiths are the top brands in terms of spending.
+2. Most segments have a diverse spending pattern, but some brands dominate significantly.
+3. Kettle is the most preferred brand across all customer segments.
+4. Smiths, Doritos, and Pringles continue to maintain their high performance.
+
+Potential Strategy
+
+1. Retirees and Older Families prefer Kettle, Smiths, and Doritos, consider bundling these brands together for promotions.
+2. Young Singles/Couples and Young Families also spend on similar brands but at lower amounts, engage them with budget-friendly promotions.
+3. Older Singles/Couples and Older Families, as they contribute the most to total spending, offer loyalty programs, bundle deals, or personalized discounts for these groups.
+4. Strengthen partnerships with the top 4 brands (Kettle, Smiths, Doritos, and Pringles) as they dominate across all segments
+5. Ensure Kettle, Smiths, Doritos, and Pringles have optimal stock levels across all stores.
+
+## Popular Pack Size Analysis
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Total Spend per Pack Size
+total_spend_packsize <- transaction_data %>%
+  group_by(PACK_SIZE) %>%
+  summarise(TOTAL_SPEND = sum(TOT_SALES)) %>%
+  arrange(desc(TOTAL_SPEND))
+
+ggplot(total_spend_packsize, aes(x = reorder(PACK_SIZE, -TOTAL_SPEND), y = TOTAL_SPEND)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Total Spend by Pack Size", x = "Pack Size (g)", y = "Total Spend ($)") +
+  scale_y_continuous(labels = scales::comma) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Most Frequently Purchased Pack Sizes
+freq_packsize <- transaction_data %>%
+  group_by(PACK_SIZE) %>%
+  summarise(TRANSACTIONS = n()) %>%
+  arrange(desc(TRANSACTIONS))
+
+ggplot(freq_packsize, aes(x = reorder(PACK_SIZE, -TRANSACTIONS), y = TRANSACTIONS)) +
+  geom_bar(stat = "identity", fill = "coral") +
+  labs(title = "Most Frequently Purchased Pack Sizes", x = "Pack Size (g)", y = "Transaction Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+Insights: 175g, 150g, and 134g packs dominate in both total spend and transaction count.
+
+Potential Strategy
+
+1. Prioritize stocking 175g, 150g, and 134g packs as they drive the most sales.
+2. Offer bulk discounts on 300g+ packs to encourage larger purchases.
+3. Investigate if customers prefer 175g and 150g due to pricing vs. value perception.
+
+## Average Spend per Pack Size.
+```{r}
+# Average Spend per Pack Size
+avg_spend_packsize <- transaction_data %>%
+  group_by(PACK_SIZE) %>%
+  summarise(AVG_SPEND = mean(TOT_SALES)) %>%
+  arrange(desc(AVG_SPEND))
+
+ggplot(avg_spend_packsize, aes(x = reorder(PACK_SIZE, -AVG_SPEND), y = AVG_SPEND)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  labs(title = "Average Spend per Pack Size", x = "Pack Size (g)", y = "Average Spend ($)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+Insights
+
+1. Larger pack sizes (380g, 330g, 270g) have the highest average spend per transaction.
+2. Mid-range packs (150g, 175g, 134g, 110g) have moderate but consistent average spend.
+3. Smaller pack sizes (90g, 160g, 200g) have the lowest average spend.
+
+Potential Strategy
+
+1. Since large packs drive higher spending, consider premium pricing or bundling offers.
+2. Maintain Focus on Popular Sizes (175g, 150g, 134g, 110g)
+3. If profitability is low, consider discontinuing smaller packs (<125g) or repositioning them as trial/sample products.
+
+
+## Transaction Count per Pack Size
+```{r}
+# Transaction Count per Pack Size
+txn_count_packsize <- transaction_data %>%
+  group_by(PACK_SIZE) %>%
+  summarise(TRANSACTION_COUNT = n()) %>%
+  arrange(desc(TRANSACTION_COUNT))
+
+ggplot(txn_count_packsize, aes(x = reorder(PACK_SIZE, -TRANSACTION_COUNT), y = TRANSACTION_COUNT)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  labs(title = "Transaction Count per Pack Size", x = "Pack Size (g)", y = "Transaction Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+Insights
+
+1. 175g, 150g, and 134g packs dominate transactions.
+2. Smaller packs (e.g., 125g, 180g, 160g, 220g) have minimal transactions.
+3. Larger packs (e.g., 380g, 330g, 300g) have lower transaction counts.
+
+Potential Strategies
+
+1. Maintain strong stock of 175g, 150g, and 134g packs.
+2. Bundle the mid range pack sizes with discounts or loyalty rewards to increase sales.
+3. Reassess the viability of smaller packs (<125g) due to low value.
+
+
+```{r}
+# Ensure DATE column is in Date format
+transaction_data$DATE <- as.Date(transaction_data$DATE, origin = "1899-12-30")
+
+# Aggregate total sales per month
+monthly_sales <- transaction_data %>%
+  mutate(MONTH = as.Date(cut(DATE, breaks = "month"))) %>%
+  group_by(MONTH) %>%
+  summarise(TOTAL_SALES = sum(TOT_SALES))
+
+ggplot(monthly_sales, aes(x = MONTH, y = TOTAL_SALES)) +
+  geom_line(color = "darkgreen", size = 1) +
+  geom_point(color = "red", size = 2) +
+  labs(title = "Monthly Sales Trend", x = "Month", y = "Total Sales ($)") +
+  theme_minimal()
+
+```
+Insights
+
+1. Highest in Jan 2019 and Apr 2019.
+2. Sharp drop in Feb 2019, suggesting possible seasonal or external factors.
+3. Sales remain relatively stable between 155,000 - 170,000
+4. Sales drop significantly in Feb 2019, potentially due to post-holiday demand drop.
+
+Potential Strategies
+
+1. Investigate Feb 2019 drop: Was there a supply chain issue, reduced demand, or pricing changes?
+2. Capitalize on peak months: Reinforce promotions before January and April.
